@@ -1,0 +1,2 @@
+# word-ppt
+word文本通过调用ai总结和转换输出成markdown模板，markdown模板在根据提供的ppt模板生成ppt
