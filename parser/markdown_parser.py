@@ -125,8 +125,16 @@ class MarkdownParser:
                     continue
 
             # 8. 普通文本段落
-            # 根据规则“不允许自由文本段落”，这里可以选择忽略或作为警告
-            # 但为了健壮性，如果是在封面区域，可能是一些描述性文字，暂时忽略
+            # 如果是在正文页面区域，且还没有进入具体的内容块(H3)，则视为页面描述
+            if not is_cover_section and current_slide and current_block is None:
+                # 如果有多行描述，用换行符连接
+                if current_slide.description:
+                    current_slide.description += "\n" + line
+                else:
+                    current_slide.description = line
+                continue
+
+            # 其他情况忽略
             pass
 
         return data

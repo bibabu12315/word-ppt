@@ -67,10 +67,11 @@ class PPTGenerator:
         # 这里我们定义一些可能的命名约定
         cover_mapping = {
             "cover_title": data.cover_title,
-            "project_name": data.meta_info.get("项目名称", ""),
-            "presenter": data.meta_info.get("汇报人", ""),
-            "department": data.meta_info.get("部门 / 团队", ""),
-            "date": data.meta_info.get("日期", "")
+            "cover_project": data.meta_info.get("项目名称", ""),
+            "cover_presenter": data.meta_info.get("汇报人", ""),
+            "cover_dept": data.meta_info.get("部门 / 团队", ""),
+            "cover_date": data.meta_info.get("日期", ""),
+            "cover_company": data.meta_info.get("公司名称", "")
         }
 
         for shape_name, text_content in cover_mapping.items():
@@ -90,6 +91,11 @@ class PPTGenerator:
                 self._set_text(shape_map[title_key], slide_data.title)
             else:
                 print(f"Warning: Shape '{title_key}' not found in template.")
+
+            # 1.5 填充页面描述: page{i}_desc
+            desc_key = f"page{page_idx}_desc"
+            if desc_key in shape_map and slide_data.description:
+                self._set_text(shape_map[desc_key], slide_data.description)
 
             # 2. 填充内容块: page{i}_bullet{j}
             for block_idx, block in enumerate(slide_data.blocks):

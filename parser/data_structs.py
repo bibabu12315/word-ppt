@@ -18,6 +18,7 @@ class SlideData:
     对应 PPT 中的 pageX
     """
     title: str = ""  # 页面主标题 (## 后的文本)
+    description: str = "" # 页面描述文本 (## 下方的普通段落)
     blocks: List[ContentBlock] = field(default_factory=list)  # 页面内的内容块列表
     page_index: int = 0  # 逻辑页码，从 1 开始 (page1, page2...)
 
