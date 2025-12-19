@@ -58,6 +58,11 @@ class PPTGenerator:
                 slide_index = 2 + i
                 slide = prs.slides[slide_index]
                 self._fill_content_page(slide, chapter_data, all_titles, i)
+        
+        # 3.3 填充结尾页 (End Slide)
+        # End slide is now at the very end
+        if len(prs.slides) > 0:
+            self._fill_end_page(prs.slides[-1], data)
                 
         # 4. 保存
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
@@ -367,6 +372,16 @@ class PPTGenerator:
             ea = rPr.makeelement(qn('a:ea'))
             rPr.append(ea)
         ea.set('typeface', font_name)
+
+    def _fill_end_page(self, slide, data: PresentationData):
+        """
+        填充结尾页
+        """
+        shape_map = self._build_shape_map(slide)
+        presenter = data.meta_info.get("汇报人", "")
+        
+        if "cover_presenter" in shape_map and presenter:
+            self._set_text(shape_map["cover_presenter"], presenter)
 
     def _clean_title(self, title):
         """

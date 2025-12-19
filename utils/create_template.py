@@ -86,6 +86,12 @@ def create_demo_template(output_path: str):
     tb.text = "Thank You"
     tb.text_frame.paragraphs[0].font.size = Pt(50)
     tb.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+    
+    # Presenter on End Page
+    tb_presenter = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(8), Inches(1))
+    tb_presenter.name = "cover_presenter"
+    tb_presenter.text = "Presenter Name"
+    tb_presenter.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
 
     # Save
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
