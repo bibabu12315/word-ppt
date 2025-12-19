@@ -5,6 +5,7 @@ import re
 from pptx import Presentation
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
+from pptx.enum.text import MSO_AUTO_SIZE
 from parser.data_structs import PresentationData
 from utils.ppt_utils import duplicate_slide, move_slide, duplicate_shape
 
@@ -245,12 +246,179 @@ class PPTGenerator:
         if "page1_desc" in shape_map:
             self._set_text(shape_map["page1_desc"], chapter_data.description)
 
-        # 3. 填充正文 (page1_bullet1)
-        if "page1_bullet1" in shape_map:
+        # 3. 填充正文
+        # 模式 A: 标题+内容 分离模式 (page1_bullet1 + page1_content1)
+        if "page1_bullet1" in shape_map and "page1_content1" in shape_map:
+            self._fill_content_paired(slide, shape_map["page1_bullet1"], shape_map["page1_content1"], chapter_data.blocks)
+        
+        # 模式 B: 仅有内容框 (page1_content1) - 自动分段
+        elif "page1_content1" in shape_map:
+            self._fill_content_multibox(slide, shape_map["page1_content1"], chapter_data.blocks)
+            
+        # 模式 C: 旧模式 (page1_bullet1) - 单文本框
+        elif "page1_bullet1" in shape_map:
             full_blocks = []
             for block in chapter_data.blocks:
                 full_blocks.append(block)
             self._set_blocks_text(shape_map["page1_bullet1"], full_blocks)
+
+    def _fill_content_paired(self, slide, proto_title, proto_content, blocks):
+        """
+        分离模式：每个 Block 生成一对 (标题框, 内容框)
+        - 标题框使用 page1_bulletX
+        - 内容框使用 page1_contentX (每个段落一个框)
+        """
+        if not blocks:
+            proto_title.text_frame.clear()
+            proto_content.text_frame.clear()
+            return
+
+        # 布局参数
+        start_top = proto_title.top
+        
+        # 计算标题和内容之间的垂直间距
+        gap_title_content = max(Pt(5), proto_content.top - (proto_title.top + proto_title.height))
+        
+        # 段落之间的间距
+        gap_paragraph = Pt(10)
+        
+        # 块与块之间的间距
+        gap_block = Pt(20)
+        
+        current_top = start_top
+        
+        title_counter = 0
+        content_counter = 0
+        
+        for block in blocks:
+            # 1. 处理标题 (Subtitle)
+            title_counter += 1
+            if title_counter == 1:
+                title_shape = proto_title
+            else:
+                title_shape = duplicate_shape(proto_title, slide)
+                title_shape.name = f"page1_bullet{title_counter}"
+            
+            title_shape.top = current_top
+            self._set_text(title_shape, block.subtitle)
+            
+            # 更新高度 (标题通常单行，使用原型高度)
+            title_height = max(proto_title.height, Pt(30))
+            current_top += title_height + gap_title_content
+            
+            # 2. 处理内容 (Bullets) - 每个段落一个文本框
+            for bullet_text in block.bullets:
+                content_counter += 1
+                if content_counter == 1:
+                    content_shape = proto_content
+                else:
+                    content_shape = duplicate_shape(proto_content, slide)
+                    content_shape.name = f"page1_content{content_counter}"
+                
+                content_shape.top = current_top
+                self._set_text(content_shape, bullet_text)
+                
+                # 估算内容高度
+                lines = bullet_text.split('\n')
+                total_visual_lines = 0
+                for line in lines:
+                    # 每行按 25 字折行 (粗略估算)
+                    line_len = len(line)
+                    if line_len == 0:
+                        total_visual_lines += 1
+                    else:
+                        total_visual_lines += (line_len // 25) + 1
+                
+                estimated_height = total_visual_lines * Pt(22) + Pt(10)
+                final_height = max(estimated_height, Pt(30))
+                
+                current_top += final_height + gap_paragraph
+            
+            # 块结束后增加额外间距 (减去最后一次加的段落间距，加上块间距)
+            current_top = current_top - gap_paragraph + gap_block
+
+    def _fill_content_multibox(self, slide, proto_shape, blocks):
+        """
+        新模式：将内容块拆分为多个文本框 (page1_content1, page1_content2...)
+        """
+        # 1. 收集所有需要显示的文本段落
+        segments = []
+        for block in blocks:
+            # 标题作为单独一段
+            if block.subtitle:
+                segments.append({"text": block.subtitle, "is_title": True})
+            # 列表/段落内容
+            for bullet in block.bullets:
+                segments.append({"text": bullet, "is_title": False})
+        
+        if not segments:
+            # 如果没有内容，清空原型并返回
+            proto_shape.text_frame.clear()
+            return
+
+        # 2. 动态生成文本框
+        current_shape = proto_shape
+        
+        # 设置第一个文本框
+        self._set_segment_text(current_shape, segments[0])
+        
+        # 记录起始位置和布局参数
+        start_left = proto_shape.left
+        start_top = proto_shape.top
+        # 估算高度步长 (由于无法精确获取渲染高度，这里使用原型高度 + 间距)
+        # 如果原型高度太小，给一个默认最小值
+        item_height = max(proto_shape.height, Pt(30)) 
+        spacing = Pt(10) # 间距
+        
+        current_top = start_top + item_height + spacing
+
+        for i in range(1, len(segments)):
+            segment = segments[i]
+            
+            # 复制形状
+            new_shape = duplicate_shape(proto_shape, slide)
+            new_shape.name = f"page1_content{i+1}"
+            
+            # 设置位置
+            new_shape.left = start_left
+            new_shape.top = current_top
+            
+            # 设置文本
+            self._set_segment_text(new_shape, segment)
+            
+            # 更新下一个位置
+            # 注意：这里仍然是基于固定步长，因为无法获取 auto_size 后的真实高度
+            # 这是一个已知限制。如果文本很长，可能会重叠。
+            # 改进方案：根据字数估算行数？
+            # 简单估算：假设一行 20-30 字 (取决于宽度和字号)
+            # 这是一个粗略的 hack
+            estimated_lines = max(1, len(segment["text"]) // 25) 
+            # 假设行高 20pt?
+            estimated_height = estimated_lines * Pt(20) + Pt(10) # padding
+            
+            # 使用估算高度或者原型高度的较大值
+            step = max(item_height, estimated_height)
+            current_top += step + spacing
+
+    def _set_segment_text(self, shape, segment):
+        """
+        设置单个段落文本框的内容
+        """
+        text_frame = shape.text_frame
+        text_frame.clear()
+        
+        p = text_frame.paragraphs[0]
+        run = p.add_run()
+        run.text = segment["text"]
+        
+        # 设置样式
+        # 简单起见，标题加粗，正文普通
+        # 实际应该参考模板样式，这里假设模板已经设置好了字体
+        run.font.bold = segment["is_title"]
+        
+        # 尝试启用自动调整大小
+        text_frame.word_wrap = True
+        text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
 
     def _set_blocks_text(self, shape, blocks):
         """

@@ -125,13 +125,17 @@ class MarkdownParser:
                     continue
 
             # 8. 普通文本段落
-            # 如果是在正文页面区域，且还没有进入具体的内容块(H3)，则视为页面描述
-            if not is_cover_section and current_slide and current_block is None:
-                # 如果有多行描述，用换行符连接
-                if current_slide.description:
-                    current_slide.description += "\n" + line
+            if not is_cover_section and current_slide:
+                # Case A: 还没有进入具体的内容块(H3)，视为页面描述
+                if current_block is None:
+                    # 如果有多行描述，用换行符连接
+                    if current_slide.description:
+                        current_slide.description += "\n" + line
+                    else:
+                        current_slide.description = line
+                # Case B: 已经在内容块内，视为普通段落内容，添加到 bullets (作为无项目符号的文本)
                 else:
-                    current_slide.description = line
+                    current_block.bullets.append(line)
                 continue
 
             # 其他情况忽略
