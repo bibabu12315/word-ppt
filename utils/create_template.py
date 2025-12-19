@@ -3,68 +3,91 @@ import os
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
 
 def create_demo_template(output_path: str):
     """
-    创建一个符合项目命名约定的测试用 PPT 模板。
-    包含：
-    - 封面页 (cover_title, presenter, date...)
-    - 10 页正文页 (page1...page10)
-      - 每页包含 pageX_title
-      - 每页包含 pageX_bullet1, pageX_bullet2 (左右布局)
+    创建一个符合新需求的测试用 PPT 模板 (4页结构)。
+    1. Cover
+    2. TOC
+    3. Content Template
+    4. End
     """
     prs = Presentation()
-    
-    # 1. 创建封面页 (Slide 0)
-    # 使用空白版式 (6 = Blank)
-    slide_layout = prs.slide_layouts[6] 
+    slide_layout = prs.slide_layouts[6] # Blank
+
+    # --- 1. Cover (Slide 0) ---
     slide = prs.slides.add_slide(slide_layout)
     
-    # 添加封面标题框
-    title_box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(1.5))
-    title_box.name = "cover_title"
-    title_box.text = "封面标题占位符"
-    p = title_box.text_frame.paragraphs[0]
-    p.font.size = Pt(44)
-    p.alignment = PP_ALIGN.CENTER
-
-    # 添加元数据框
-    meta_box = slide.shapes.add_textbox(Inches(1), Inches(4), Inches(8), Inches(1))
-    meta_box.name = "presenter"
-    meta_box.text = "汇报人占位符"
-    p = meta_box.text_frame.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
+    # Title
+    tb = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(1.5))
+    tb.name = "cover_title"
+    tb.text = "Cover Title Placeholder"
+    tb.text_frame.paragraphs[0].font.size = Pt(44)
+    tb.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
     
-    # 2. 创建正文页 (Page 1 - 10)
-    for i in range(1, 11):
-        slide = prs.slides.add_slide(slide_layout)
-        
-        # 页面标题
-        # 命名规则: page{i}_title
-        title_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(1))
-        title_shape.name = f"page{i}_title"
-        title_shape.text = f"Page {i} Title"
-        title_shape.text_frame.paragraphs[0].font.size = Pt(32)
-        title_shape.text_frame.paragraphs[0].font.bold = True
-        
-        # 内容框 1 (左侧)
-        # 命名规则: page{i}_bullet1
-        body1 = slide.shapes.add_textbox(Inches(0.5), Inches(1.8), Inches(4.2), Inches(5))
-        body1.name = f"page{i}_bullet1"
-        body1.text = f"Page {i} Bullet 1 Area"
-        
-        # 内容框 2 (右侧)
-        # 命名规则: page{i}_bullet2
-        body2 = slide.shapes.add_textbox(Inches(5.0), Inches(1.8), Inches(4.2), Inches(5))
-        body2.name = f"page{i}_bullet2"
-        body2.text = f"Page {i} Bullet 2 Area"
+    # Meta info
+    meta_fields = ["cover_company", "cover_project", "cover_presenter", "cover_dept", "cover_date"]
+    for i, field in enumerate(meta_fields):
+        tb = slide.shapes.add_textbox(Inches(1), Inches(4 + i*0.5), Inches(8), Inches(0.5))
+        tb.name = field
+        tb.text = field
+        tb.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
 
-        # 可以在这里添加更多框，如 page{i}_bullet3...
+    # --- 2. TOC (Slide 1) ---
+    slide = prs.slides.add_slide(slide_layout)
+    
+    # Title
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(3), Inches(1))
+    tb.text = "Table of Contents"
+    tb.text_frame.paragraphs[0].font.size = Pt(32)
+    
+    # Prototypes for TOC items
+    # page1_title_num (01)
+    num_proto = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(1), Inches(0.5))
+    num_proto.name = "page1_title_num"
+    num_proto.text = "01"
+    num_proto.text_frame.paragraphs[0].font.size = Pt(24)
+    num_proto.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 0, 0) # Red for visibility
+    
+    # page1_title (Chapter Title)
+    title_proto = slide.shapes.add_textbox(Inches(2.2), Inches(2), Inches(6), Inches(0.5))
+    title_proto.name = "page1_title"
+    title_proto.text = "Chapter Title Prototype"
+    title_proto.text_frame.paragraphs[0].font.size = Pt(24)
 
-    # 确保目录存在
+    # --- 3. Content Template (Slide 2) ---
+    slide = prs.slides.add_slide(slide_layout)
+    
+    # Nav Bar Prototype (page1_title)
+    # Horizontal distribution
+    nav_proto = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(2), Inches(0.5))
+    nav_proto.name = "page1_title"
+    nav_proto.text = "Nav Item"
+    nav_proto.text_frame.paragraphs[0].font.size = Pt(14)
+    nav_proto.text_frame.paragraphs[0].font.bold = True
+    
+    # Description (page1_desc)
+    desc_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(1))
+    desc_box.name = "page1_desc"
+    desc_box.text = "Description text goes here..."
+    desc_box.text_frame.paragraphs[0].font.size = Pt(12)
+    desc_box.text_frame.paragraphs[0].font.italic = True
+    
+    # Content Body (page1_bullet1)
+    content_box = slide.shapes.add_textbox(Inches(0.5), Inches(3), Inches(9), Inches(4))
+    content_box.name = "page1_bullet1"
+    content_box.text = "Content Body Placeholder"
+    content_box.text_frame.paragraphs[0].font.size = Pt(18)
+
+    # --- 4. End (Slide 3) ---
+    slide = prs.slides.add_slide(slide_layout)
+    tb = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(8), Inches(2))
+    tb.text = "Thank You"
+    tb.text_frame.paragraphs[0].font.size = Pt(50)
+    tb.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+
+    # Save
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     prs.save(output_path)
-    print(f"Template created at: {output_path}")
-
-if __name__ == "__main__":
-    create_demo_template("d:\\project_code\\Word转PPT\\input\\template.pptx")
+    print(f"New 4-slide template created at: {output_path}")

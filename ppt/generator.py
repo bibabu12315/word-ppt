@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
+import copy
+import re
 from pptx import Presentation
 from pptx.util import Pt
+from pptx.dml.color import RGBColor
 from parser.data_structs import PresentationData
+from utils.ppt_utils import duplicate_slide, move_slide, duplicate_shape
 
 class PPTGenerator:
     """
@@ -23,170 +27,296 @@ class PPTGenerator:
         """
         prs = Presentation(self.template_path)
         
-        # 1. 构建全局 Shape 索引
-        # 为了快速查找 pageX_title 等占位符，我们需要遍历所有页面
-        # 结构: { "page1_title": shape_obj, "page1_bullet1": shape_obj, ... }
-        shape_map = self._build_shape_map(prs)
+        # 验证模板结构：必须至少有 4 页 (封面, 目录, 内容, 结尾)
+        if len(prs.slides) < 4:
+            print("Warning: Template should have at least 4 slides (Cover, TOC, Content, End).")
         
-        # 2. 填充封面
-        self._fill_cover(shape_map, data)
+        # 1. 填充封面 (Slide 0)
+        print("Generating Cover...")
+        self._fill_cover(prs.slides[0], data)
         
-        # 3. 填充正文页面
-        self._fill_slides(shape_map, data)
+        # 2. 填充目录 (Slide 1)
+        print("Generating TOC...")
+        self._fill_toc(prs.slides[1], data)
         
+        # 3. 生成并填充内容页
+        print("Generating Content Slides...")
+        content_template_index = 2
+        
+        num_chapters = len(data.slides)
+        if num_chapters > 0:
+            # 3.1 复制 Slide 2 (N-1 次)
+            for i in range(1, num_chapters):
+                duplicate_slide(prs, content_template_index)
+            
+            # 3.2 移动 End 页到最后
+            move_slide(prs, 3, len(prs.slides) - 1)
+            
+            all_titles = [s.title for s in data.slides]
+            
+            for i, chapter_data in enumerate(data.slides):
+                slide_index = 2 + i
+                slide = prs.slides[slide_index]
+                self._fill_content_page(slide, chapter_data, all_titles, i)
+                
         # 4. 保存
-        # 确保输出目录存在
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
         prs.save(self.output_path)
         print(f"PPT generated successfully: {self.output_path}")
 
-    def _build_shape_map(self, prs) -> dict:
+    def _build_shape_map(self, slide) -> dict:
         """
-        遍历整个 PPT，建立 shape_name -> shape 对象的映射。
-        注意：如果不同页面有相同名字的 shape，后面的会覆盖前面的吗？
-        根据用户的命名规则 page1_..., page2_...，名字应该是全局唯一的。
+        建立单个幻灯片的 shape_name -> shape 映射
         """
         mapping = {}
-        for slide_idx, slide in enumerate(prs.slides):
-            for shape in slide.shapes:
-                if not shape.has_text_frame:
-                    continue
-                
-                # 获取 shape 名称 (在 Selection Pane 中看到的名字)
-                name = shape.name
-                mapping[name] = shape
-                # print(f"Found shape: {name} on slide {slide_idx}") # Debug
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            mapping[shape.name] = shape
         return mapping
 
-    def _fill_cover(self, shape_map: dict, data: PresentationData):
+    def _fill_cover(self, slide, data: PresentationData):
         """
         填充封面信息
-        尝试匹配常见封面占位符
         """
-        # 映射规则：代码中的字段 -> PPT 模板中的 Shape Name
-        # 这里我们定义一些可能的命名约定
+        shape_map = self._build_shape_map(slide)
         cover_mapping = {
             "cover_title": data.cover_title,
+            "cover_company": data.meta_info.get("公司名称", ""),
             "cover_project": data.meta_info.get("项目名称", ""),
             "cover_presenter": data.meta_info.get("汇报人", ""),
             "cover_dept": data.meta_info.get("部门 / 团队", ""),
-            "cover_date": data.meta_info.get("日期", ""),
-            "cover_company": data.meta_info.get("公司名称", "")
+            "cover_date": data.meta_info.get("日期", "")
         }
 
         for shape_name, text_content in cover_mapping.items():
             if shape_name in shape_map and text_content:
                 self._set_text(shape_map[shape_name], text_content)
 
-    def _fill_slides(self, shape_map: dict, data: PresentationData):
+    def _fill_toc(self, slide, data: PresentationData):
         """
-        填充正文页面
+        填充目录页
+        动态生成: page1_title_num (01), page1_title (标题)
         """
-        for slide_data in data.slides:
-            page_idx = slide_data.page_index # e.g., 1, 2, 3
+        shape_map = self._build_shape_map(slide)
+        
+        # 查找原型 Shape
+        proto_num = shape_map.get("page1_title_num")
+        proto_title = shape_map.get("page1_title")
+        
+        if not proto_num or not proto_title:
+            print("Warning: TOC prototypes (page1_title_num, page1_title) not found.")
+            return
+
+        # --- Dynamic Layout Calculation ---
+        # Access presentation object via slide -> part -> package -> presentation_part -> presentation
+        # Or simpler: since we created 'prs' in generate(), we could pass it.
+        # But here we only have 'slide'.
+        # In python-pptx, slide.part.package.presentation_part.presentation gives the Presentation object.
+        # However, let's try a safer way if possible.
+        # Actually, we can just use a fixed height if we can't get it, but getting it is better.
+        try:
+            prs = slide.part.package.presentation_part.presentation
+            page_height = prs.slide_height
+        except AttributeError:
+            # Fallback: Assume standard 16:9 (10 inches height? No, 7.5 inches usually)
+            # 7.5 inches = 6858000 EMUs
+            page_height = 6858000 
+
+        
+        # Determine layout constraints
+        start_top_num = proto_num.top
+        start_top_title = proto_title.top
+        
+        # Use the lower starting point as the reference for "start_y"
+        start_y = max(start_top_num, start_top_title)
+        item_height = max(proto_num.height, proto_title.height)
+        
+        # Define bottom margin (use same as top margin for symmetry, or at least 1 inch)
+        # Assuming 96 dpi, 1 inch = 914400 EMUs. 
+        # Let's use a safe bottom margin.
+        bottom_margin = start_y 
+        max_y = page_height - bottom_margin
+        
+        num_items = len(data.slides)
+        
+        # Default spacing
+        step_y = item_height * 1.5
+        
+        if num_items > 1:
+            # Calculate available vertical span for the *starts* of the items
+            # The last item starts at `max_y - item_height`
+            available_span = max_y - start_y - item_height
             
-            # 1. 填充页面标题: page{i}_title
-            title_key = f"page{page_idx}_title"
-            if title_key in shape_map:
-                self._set_text(shape_map[title_key], slide_data.title)
+            # Calculate required spacing to fit exactly
+            calculated_step = available_span / (num_items - 1)
+            
+            # Use the smaller of (calculated_step, default_spacing) to avoid spreading too much
+            # But if calculated_step is very small (negative even), we must compress.
+            # So we actually want:
+            # If calculated_step < default_spacing: use calculated_step (compress to fit)
+            # If calculated_step > default_spacing: use default_spacing (don't spread too much)
+            
+            # However, we shouldn't overlap too much. 
+            # Minimum spacing = item_height (touching)
+            
+            step_y = min(calculated_step, item_height * 1.5)
+            
+            # Ensure we don't overlap if possible (unless page is too small)
+            if step_y < item_height:
+                # Warning: Items will overlap. 
+                # We could enforce step_y = item_height, but then it overflows page.
+                # User asked to "limit them in the page", so we respect page bounds even if it overlaps.
+                pass
+
+        # --- Fix for Issue 2: Clone FIRST, then fill ---
+        # We collect all shapes (original + clones) first, WITHOUT modifying them yet.
+        # This ensures all clones are based on the clean prototype.
+        
+        toc_items = [] # List of (num_shape, title_shape)
+        
+        for i in range(len(data.slides)):
+            if i == 0:
+                # Use the prototype itself for the first item
+                toc_items.append((proto_num, proto_title))
             else:
-                print(f"Warning: Shape '{title_key}' not found in template.")
-
-            # 1.5 填充页面描述: page{i}_desc
-            desc_key = f"page{page_idx}_desc"
-            if desc_key in shape_map and slide_data.description:
-                self._set_text(shape_map[desc_key], slide_data.description)
-
-            # 2. 填充内容块: page{i}_bullet{j}
-            for block_idx, block in enumerate(slide_data.blocks):
-                bullet_key = f"page{page_idx}_bullet{block_idx + 1}" # bullet1, bullet2...
+                # Clone the prototype (which is still clean because we haven't modified it yet)
+                new_num = duplicate_shape(proto_num, slide)
+                new_title = duplicate_shape(proto_title, slide)
                 
-                if bullet_key in shape_map:
-                    # 组合文本：小标题 + 列表
-                    # 格式：
-                    # 小标题
-                    # - 要点1
-                    # - 要点2
-                    
-                    full_text_lines = []
-                    if block.subtitle:
-                        full_text_lines.append(block.subtitle)
-                    
-                    # 这里我们不手动加 "- "，因为 PPT 的文本框通常自带 bullet 样式
-                    # 或者我们可以根据需要添加
-                    # 简单起见，直接填入文本，让 PPT 样式控制
-                    for b in block.bullets:
-                        full_text_lines.append(b)
-                    
-                    self._set_text_with_formatting(shape_map[bullet_key], block.subtitle, block.bullets)
-                else:
-                    print(f"Warning: Shape '{bullet_key}' not found in template (for content: {block.subtitle}).")
+                # Position
+                offset = i * step_y
+                new_num.top = start_top_num + int(offset)
+                new_title.top = start_top_title + int(offset)
+                
+                toc_items.append((new_num, new_title))
+        
+        # Now fill text for all items
+        for i, (num_shape, title_shape) in enumerate(toc_items):
+            num_text = f"{i+1:02d}"
+            # Clean title for TOC (remove "一、", "1." etc)
+            title_text = self._clean_title(data.slides[i].title)
+            
+            self._set_text(num_shape, num_text)
+            self._set_text(title_shape, title_text)
 
-    def _set_text(self, shape, text):
+    def _fill_content_page(self, slide, chapter_data, all_titles, current_index):
         """
-        设置文本，尽量保留原有格式（字体、颜色等）
-        策略：复用第一个段落的第一个 Run，而不是清空整个 TextFrame
+        填充内容页
+        包含: 导航栏, 描述, 正文
+        """
+        shape_map = self._build_shape_map(slide)
+        
+        # 1. 生成导航栏 (page1_title)
+        proto_nav = shape_map.get("page1_title")
+        if proto_nav:
+            margin_x = proto_nav.width * 1.1 
+            start_left = proto_nav.left
+            
+            # --- Fix for Issue 4: Clone FIRST, then fill ---
+            nav_items = []
+            for i in range(len(all_titles)):
+                if i == 0:
+                    nav_items.append(proto_nav)
+                else:
+                    new_shape = duplicate_shape(proto_nav, slide)
+                    new_shape.left = start_left + int(i * margin_x)
+                    nav_items.append(new_shape)
+            
+            # Fill text and color
+            for i, shape in enumerate(nav_items):
+                # Clean title for Nav Bar
+                clean_title = self._clean_title(all_titles[i])
+                self._set_text(shape, clean_title)
+                
+                if i != current_index:
+                    self._set_font_color(shape, RGBColor(192, 192, 192)) # Gray
+                else:
+                    self._set_font_color(shape, RGBColor(0, 0, 0)) # Black
+        else:
+            print("Warning: Nav prototype (page1_title) not found on content slide.")
+
+        # 2. 填充描述 (page1_desc)
+        if "page1_desc" in shape_map:
+            self._set_text(shape_map["page1_desc"], chapter_data.description)
+
+        # 3. 填充正文 (page1_bullet1)
+        if "page1_bullet1" in shape_map:
+            full_blocks = []
+            for block in chapter_data.blocks:
+                full_blocks.append(block)
+            self._set_blocks_text(shape_map["page1_bullet1"], full_blocks)
+
+    def _set_blocks_text(self, shape, blocks):
+        """
+        将多个 ContentBlock 填充到一个文本框
         """
         text_frame = shape.text_frame
         
-        # 确保至少有一个段落
+        # Capture style from first run of first paragraph
+        template_run = None
+        if text_frame.paragraphs and text_frame.paragraphs[0].runs:
+            template_run = text_frame.paragraphs[0].runs[0]
+            
+        text_frame.clear() # Clear all content
+        
+        for i, block in enumerate(blocks):
+            # Subtitle
+            if block.subtitle:
+                p = text_frame.add_paragraph() if i > 0 or text_frame.paragraphs else text_frame.paragraphs[0]
+                run = p.add_run()
+                run.text = block.subtitle
+                if template_run:
+                    self._copy_font_style(template_run, run)
+                run.font.bold = True
+            
+            # Bullets
+            for bullet in block.bullets:
+                p = text_frame.add_paragraph()
+                p.level = 1
+                run = p.add_run()
+                run.text = bullet
+                if template_run:
+                    self._copy_font_style(template_run, run)
+
+    def _set_text(self, shape, text):
+        """
+        设置文本，保留原有格式。
+        Fix: 确保清除多余的段落，防止旧文本残留。
+        """
+        text_frame = shape.text_frame
+        
         if not text_frame.paragraphs:
             text_frame.add_paragraph()
             
         p = text_frame.paragraphs[0]
         
-        # 如果段落里有 run，复用第一个
+        # Set text on first run
         if p.runs:
-            # 修改第一个 run 的文字
             p.runs[0].text = text
-            # 清空后续 run 的文本，避免重叠（视觉上删除）
+            # Clear subsequent runs in the first paragraph
             for i in range(1, len(p.runs)):
                 p.runs[i].text = ""
         else:
-            # 没有 run，创建一个，它会继承段落/样式默认值
             run = p.add_run()
             run.text = text
 
-    def _set_text_with_formatting(self, shape, title, bullets):
+        # --- Fix for Issue 2: Remove extra paragraphs ---
+        # If the original shape had multiple paragraphs, remove them.
+        # We iterate backwards to avoid index issues.
+        for i in range(len(text_frame.paragraphs) - 1, 0, -1):
+            p_element = text_frame.paragraphs[i]._p
+            p_element.getparent().remove(p_element)
+
+    def _set_font_color(self, shape, rgb_color):
         """
-        设置文本，尝试保留模板字体格式
+        强制设置文本框内所有文字的颜色
         """
-        text_frame = shape.text_frame
-        
-        # 1. 捕获模板样式 (从第一个段落的第一个 run)
-        # 我们假设模板里的占位符（如 "page1_bullet1"）已经设置好了期望的字体
-        template_run = None
-        if text_frame.paragraphs and text_frame.paragraphs[0].runs:
-            template_run = text_frame.paragraphs[0].runs[0]
-            
-        # 2. 清除内容
-        # 注意：clear() 会移除所有段落并重置格式，所以我们需要手动恢复字体
-        text_frame.clear()
-        
-        # 3. 添加小标题
-        if title:
-            p = text_frame.paragraphs[0] # clear 后会剩下一个空段落
-            run = p.add_run()
-            run.text = title
-            
-            # 恢复字体并加粗
-            if template_run:
-                self._copy_font_style(template_run, run)
-            run.font.bold = True 
-        
-        # 4. 添加列表项
-        for bullet in bullets:
-            p = text_frame.add_paragraph()
-            p.level = 1 # 缩进
-            
-            run = p.add_run()
-            run.text = bullet
-            
-            # 恢复字体
-            if template_run:
-                self._copy_font_style(template_run, run)
-                # 列表项通常不强制加粗，除非模板本身就是粗体
-                # 这里我们不强制设为 False，而是跟随模板
+        if not shape.has_text_frame:
+            return
+        for p in shape.text_frame.paragraphs:
+            for run in p.runs:
+                run.font.color.rgb = rgb_color
 
     def _copy_font_style(self, src_run, dest_run):
         """
@@ -196,23 +326,18 @@ class PPTGenerator:
             return
         
         try:
-            # 1. 复制字体名称 (包含中文字体处理)
             if src_run.font.name:
                 dest_run.font.name = src_run.font.name
-                # 处理中文字体 (East Asian typeface)
                 self._set_ea_font(dest_run, src_run.font.name)
             
-            # 2. 复制大小
             if src_run.font.size:
                 dest_run.font.size = src_run.font.size
             
-            # 3. 复制加粗/斜体
             if src_run.font.bold is not None:
                 dest_run.font.bold = src_run.font.bold
             if src_run.font.italic is not None:
                 dest_run.font.italic = src_run.font.italic
                 
-            # 4. 复制颜色
             if src_run.font.color:
                 if src_run.font.color.type == 1: # RGB
                     dest_run.font.color.rgb = src_run.font.color.rgb
@@ -224,12 +349,31 @@ class PPTGenerator:
 
     def _set_ea_font(self, run, font_name):
         """
-        设置东亚字体 (解决中文字体不生效的问题)
+        设置东亚字体
         """
         from pptx.oxml.ns import qn
-        rPr = run._element.get_or_add_rPr()
+        try:
+            # Try standard access
+            rPr = run._element.get_or_add_rPr()
+        except AttributeError:
+            # Fallback for _Run objects where _element might be named _r
+            if hasattr(run, '_r'):
+                rPr = run._r.get_or_add_rPr()
+            else:
+                return
+
         ea = rPr.find(qn('a:ea'))
         if ea is None:
             ea = rPr.makeelement(qn('a:ea'))
             rPr.append(ea)
         ea.set('typeface', font_name)
+
+    def _clean_title(self, title):
+        """
+        Remove leading numbering like "一、", "1.", "1、"
+        """
+        if not title:
+            return ""
+        # Pattern: Start of string, followed by (digits or chinese numerals), followed by dot or comma or chinese comma, optional whitespace
+        pattern = r"^([0-9]+|[一二三四五六七八九十百]+)[、.．]\s*"
+        return re.sub(pattern, "", title)

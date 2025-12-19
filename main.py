@@ -41,6 +41,8 @@ def main():
         generator.generate(presentation_data)
         print("Done!")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Error generating PPT: {e}")
         sys.exit(1)
 
