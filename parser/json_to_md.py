@@ -86,9 +86,33 @@ class JsonToMdConverter:
 
     def _convert_with_ai(self, json_data: dict) -> str:
         """
-        AI 增强转换 (Mock)
+        AI 增强转换
+        使用 LLM 提炼和简化文本内容
         """
-        print("AI mode selected. (Feature not implemented yet, falling back to default)")
-        # 这里未来可以调用 LLM API 对 json_data 进行处理
-        # 例如：summary = llm.summarize(section['text'])
-        return self._convert_default(json_data)
+        print("AI mode selected. Refining text with Qwen-Plus...")
+        from ai.llm_client import LLMClient
+        llm = LLMClient()
+        
+        # 深度复制一份数据，以免修改原数据
+        import copy
+        refined_data = copy.deepcopy(json_data)
+        
+        sections = refined_data.get("sections", [])
+        total_sections = len(sections)
+        
+        for i, section in enumerate(sections):
+            # 简单的进度提示
+            print(f"Processing section {i+1}/{total_sections}...")
+            
+            blocks = section.get("blocks", [])
+            for block in blocks:
+                if block["type"] == "paragraph":
+                    original_text = block["text"]
+                    # 跳过太短的文本，避免浪费 token
+                    if len(original_text) > 10:
+                        refined_text = llm.refine_text(original_text)
+                        if refined_text:
+                            block["text"] = refined_text
+                            
+        print("AI refinement completed.")
+        return self._convert_default(refined_data)

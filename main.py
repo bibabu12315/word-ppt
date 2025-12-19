@@ -7,9 +7,13 @@ from parser.word_parser import WordParser
 from parser.json_to_md import JsonToMdConverter
 from ppt.generator import PPTGenerator
 from utils.create_template import create_demo_template
+from dotenv import load_dotenv
+
+# 加载 .env 文件中的环境变量
+load_dotenv()
 
 # --- Configuration ---
-USE_LLM = 0  # 0: Default, 1: AI Enhanced
+USE_LLM = 1  # 0: Default, 1: AI Enhanced
 
 def main():
     # 1. 配置路径
