@@ -42,23 +42,75 @@ class PPTGenerator:
         
         # 3. 生成并填充内容页
         print("Generating Content Slides...")
-        content_template_index = 2
+        
+        # 检查模板结构
+        # 假设结构: 0:Cover, 1:TOC, 2:ChapterCover, 3:Content, 4:End
+        has_chapter_cover = len(prs.slides) >= 5
+        
+        if not has_chapter_cover:
+            print("Warning: Template does not seem to have a dedicated Chapter Cover slide (Index 2).")
+            print("Assuming standard 4-slide structure. Chapter Cover will be skipped.")
+            # Fallback to old logic if needed, or just error out?
+            # For now, let's assume the user provided the correct template as requested.
+            # But to be safe, we can just use Slide 2 as content if only 4 slides exist.
+            tpl_cover_idx = -1
+            tpl_content_idx = 2
+            end_idx = 3
+        else:
+            tpl_cover_idx = 2
+            tpl_content_idx = 3
+            end_idx = 4
         
         num_chapters = len(data.slides)
+        slide_pairs = [] # List of (cover_slide, content_slide)
+        
         if num_chapters > 0:
-            # 3.1 复制 Slide 2 (N-1 次)
-            for i in range(1, num_chapters):
-                duplicate_slide(prs, content_template_index)
-            
-            # 3.2 移动 End 页到最后
-            move_slide(prs, 3, len(prs.slides) - 1)
-            
+            # 3.1 准备幻灯片对象
+            if has_chapter_cover:
+                # Chapter 1 uses the original templates
+                slide_pairs.append((prs.slides[tpl_cover_idx], prs.slides[tpl_content_idx]))
+                
+                # Chapter 2+ duplicate the templates
+                for i in range(1, num_chapters):
+                    new_cover = duplicate_slide(prs, tpl_cover_idx)
+                    new_content = duplicate_slide(prs, tpl_content_idx)
+                    slide_pairs.append((new_cover, new_content))
+                
+                # Move End Slide to the very end
+                move_slide(prs, end_idx, len(prs.slides) - 1)
+                
+            else:
+                # Old logic: only content slides
+                slide_pairs.append((None, prs.slides[tpl_content_idx]))
+                for i in range(1, num_chapters):
+                    new_content = duplicate_slide(prs, tpl_content_idx)
+                    slide_pairs.append((None, new_content))
+                move_slide(prs, end_idx, len(prs.slides) - 1)
+
+            # 3.2 填充内容
             all_titles = [s.title for s in data.slides]
             
+            # Page Index Counter
+            # TOC is Page 1.
+            # So next page (Chapter 1 Cover) is Page 2.
+            current_page_idx = 2
+            
             for i, chapter_data in enumerate(data.slides):
-                slide_index = 2 + i
-                slide = prs.slides[slide_index]
-                self._fill_content_page(slide, chapter_data, all_titles, i)
+                cover_slide, content_slide = slide_pairs[i]
+                
+                # Fill Chapter Cover (if exists)
+                if cover_slide:
+                    self._fill_chapter_cover(cover_slide, chapter_data, i + 1)
+                    # Chapter Cover counts as a page (Page 2), but doesn't show number
+                    current_page_idx += 1
+                
+                # Fill Content Page
+                if content_slide:
+                    # Content Page is next (Page 3)
+                    # Update chapter_data page_index for internal consistency if needed
+                    chapter_data.page_index = current_page_idx
+                    self._fill_content_page(content_slide, chapter_data, all_titles, i)
+                    current_page_idx += 1
         
         # 3.3 填充结尾页 (End Slide)
         # End slide is now at the very end
@@ -69,6 +121,48 @@ class PPTGenerator:
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
         prs.save(self.output_path)
         print(f"PPT generated successfully: {self.output_path}")
+
+    def _find_shape(self, shape_map, base_name):
+        """
+        Helper to find a shape by base name, trying prefixes page1_, page2_, page3_.
+        """
+        prefixes = ["page1_", "page2_", "page3_"]
+        
+        # Try exact match first (if base_name already has prefix)
+        if base_name in shape_map:
+            return shape_map[base_name]
+            
+        # Try prefixes
+        for prefix in prefixes:
+            candidate = prefix + base_name
+            if candidate in shape_map:
+                return shape_map[candidate]
+                
+        return None
+
+    def _fill_chapter_cover(self, slide, chapter_data, chapter_num):
+        """
+        填充章节封面页
+        有且只有: page1_title (章节标题), page1_title_num (章节序号)
+        无导航栏, 无页码
+        """
+        shape_map = self._build_shape_map(slide)
+        
+        # 1. 填充标题
+        title_shape = self._find_shape(shape_map, "title")
+        if title_shape:
+            # 这里 page1_title 用作章节标题
+            clean_title = self._clean_title(chapter_data.title)
+            self._set_text(title_shape, clean_title)
+            
+        # 2. 填充序号
+        num_shape = self._find_shape(shape_map, "title_num")
+        if num_shape:
+            num_text = f"{chapter_num:02d}"
+            self._set_text(num_shape, num_text)
+            
+        # 3. 清理可能存在的其他干扰元素 (可选，如果模板很干净则不需要)
+        # 用户说 "有且只有文本框...", 假设模板已经只保留了这两个。
 
     def _build_shape_map(self, slide) -> dict:
         """
@@ -180,8 +274,8 @@ class PPTGenerator:
         shape_map = self._build_shape_map(slide)
         
         # 查找原型 Shape
-        proto_num = shape_map.get("page1_title_num")
-        proto_title = shape_map.get("page1_title")
+        proto_num = self._find_shape(shape_map, "title_num")
+        proto_title = self._find_shape(shape_map, "title")
         
         if not proto_num or not proto_title:
             print("Warning: TOC prototypes (page1_title_num, page1_title) not found.")
@@ -280,8 +374,13 @@ class PPTGenerator:
             self._set_text(title_shape, title_text)
             
             # 规范化命名：page{i+2}_title (目录项对应正文页的标题)
-            # 目录本身是 Page 1，正文第一页是 Page 2
-            target_page_idx = i + 2
+            # 目录本身是 Page 1
+            # Chapter 1 Cover is Page 2
+            # Chapter 1 Content is Page 3
+            # Chapter 2 Cover is Page 4
+            # Chapter 2 Content is Page 5
+            # Formula: target_page_idx = 2 + i * 2
+            target_page_idx = 2 + i * 2
             title_shape.name = f"page{target_page_idx}_title"
             num_shape.name = f"page{target_page_idx}_title_num"
 
@@ -297,7 +396,7 @@ class PPTGenerator:
         page_idx = chapter_data.page_index # 应该是 2, 3, 4...
         
         # 1. 生成导航栏 (page1_title) -> page{page_idx}_title
-        proto_nav = shape_map.get("page1_title")
+        proto_nav = self._find_shape(shape_map, "title")
         if proto_nav:
             # 获取页面尺寸
             prs = slide.part.package.presentation_part.presentation
@@ -332,8 +431,9 @@ class PPTGenerator:
                 nav_items.append(shape)
                 
                 # 规范化命名：导航栏的每一项对应一个页面
-                # 第 i 项对应 Page {i+2}
-                nav_items[-1].name = f"page{i+2}_title"
+                # 第 i 项对应 Chapter i 的 Cover Page (Page 2 + i*2)
+                target_page_idx = 2 + i * 2
+                nav_items[-1].name = f"page{target_page_idx}_title"
             
             # Fill text and color
             for i, shape in enumerate(nav_items):
@@ -341,28 +441,33 @@ class PPTGenerator:
                 clean_title = self._clean_title(all_titles[i])
                 self._set_text(shape, clean_title)
                 
-                if i != current_index:
-                    self._set_font_color(shape, RGBColor(192, 192, 192)) # Gray
-                else:
-                    self._set_font_color(shape, RGBColor(0, 0, 0)) # Black
+                # Remove color override to respect template font settings
+                # if i != current_index:
+                #     self._set_font_color(shape, RGBColor(192, 192, 192)) # Gray
+                # else:
+                #     self._set_font_color(shape, RGBColor(0, 0, 0)) # Black
         else:
             print("Warning: Nav prototype (page1_title) not found on content slide.")
 
         # 2. 填充描述 (page1_desc)
-        if "page1_desc" in shape_map:
-            self._set_text(shape_map["page1_desc"], chapter_data.description)
+        desc_shape = self._find_shape(shape_map, "desc")
+        if desc_shape:
+            self._set_text(desc_shape, chapter_data.description)
 
         # 3. 填充页码 (page1 -> pageX)
         self._ensure_page_number(slide, page_idx)
 
         # 4. 填充正文
         # 模式 A: 标题+内容 分离模式 (page1_bullet1 + page1_content1)
-        if "page1_bullet1" in shape_map and "page1_content1" in shape_map:
-            self._fill_content_paired(slide, shape_map["page1_bullet1"], shape_map["page1_content1"], chapter_data.blocks, shape_map, page_idx)
+        bullet_shape = self._find_shape(shape_map, "bullet1")
+        content_shape = self._find_shape(shape_map, "content1")
+        
+        if bullet_shape and content_shape:
+            self._fill_content_paired(slide, bullet_shape, content_shape, chapter_data.blocks, shape_map, page_idx)
         
         # 模式 B: 仅有内容框 (page1_content1) - 自动分段
-        elif "page1_content1" in shape_map:
-            self._fill_content_multibox(slide, shape_map["page1_content1"], chapter_data.blocks, shape_map, page_idx)
+        elif content_shape:
+            self._fill_content_multibox(slide, content_shape, chapter_data.blocks, shape_map, page_idx)
 
     def _fill_content_paired(self, slide, proto_title, proto_content, blocks, shape_map, page_idx):
         """
@@ -377,7 +482,7 @@ class PPTGenerator:
             return
 
         # 查找关键词原型
-        proto_keyword = shape_map.get("page1_keyword1")
+        proto_keyword = self._find_shape(shape_map, "keyword1")
 
         # 布局参数
         start_top = proto_title.top
@@ -479,8 +584,12 @@ class PPTGenerator:
             
             shape.top = current_top
             
-            # 设置文本
-            self._set_segment_text(shape, seg)
+            # 设置文本 (使用 _set_text 保留格式)
+            self._set_text(shape, seg["text"])
+            
+            # 确保文本框高度自适应，以便正确计算堆叠位置
+            shape.text_frame.word_wrap = True
+            shape.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
             
             # 更新位置
             current_top += shape.height + gap
@@ -495,8 +604,10 @@ class PPTGenerator:
         # 1. 尝试查找现有的页码框 (可能是 page1 原型，或者是已经重命名的 pageX)
         page_shape = shape_map.get(target_name)
         if not page_shape:
-            # 尝试查找原型 page1
-            page_shape = shape_map.get("page1")
+            # 尝试查找原型 page1, page2, page3
+            if "page1" in shape_map: page_shape = shape_map["page1"]
+            elif "page2" in shape_map: page_shape = shape_map["page2"]
+            elif "page3" in shape_map: page_shape = shape_map["page3"]
         
         # 2. 如果还没找到，创建一个新的
         if not page_shape:
@@ -593,6 +704,7 @@ class PPTGenerator:
         """
         设置文本，保留原有格式。
         Fix: 确保清除多余的段落，防止旧文本残留。
+        Fix: 智能捕获样式 (从第一个非空 Run 继承)
         """
         text_frame = shape.text_frame
         
@@ -601,17 +713,36 @@ class PPTGenerator:
             
         p = text_frame.paragraphs[0]
         
-        # Set text on first run
+        # 1. Find a representative run to steal style from
+        style_run = None
         if p.runs:
-            p.runs[0].text = text
-            # Clear subsequent runs in the first paragraph
-            for i in range(1, len(p.runs)):
-                p.runs[i].text = ""
+            # Use the first run that has text, or just the first run
+            for r in p.runs:
+                if r.text and r.text.strip():
+                    style_run = r
+                    break
+            if not style_run and p.runs:
+                style_run = p.runs[0]
+        
+        # 2. Prepare target run
+        target_run = None
+        if not p.runs:
+            target_run = p.add_run()
         else:
-            run = p.add_run()
-            run.text = text
+            target_run = p.runs[0]
+            
+        # 3. Apply style from style_run to target_run (if they are different)
+        if style_run and style_run != target_run:
+            self._copy_font_style(style_run, target_run)
+            
+        # 4. Set text
+        target_run.text = text
+        
+        # 5. Clear other runs in the first paragraph
+        for i in range(1, len(p.runs)):
+            p.runs[i].text = ""
 
-        # --- Fix for Issue 2: Remove extra paragraphs ---
+        # 6. Remove extra paragraphs
         # If the original shape had multiple paragraphs, remove them.
         # We iterate backwards to avoid index issues.
         for i in range(len(text_frame.paragraphs) - 1, 0, -1):

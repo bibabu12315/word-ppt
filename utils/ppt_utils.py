@@ -5,6 +5,7 @@ from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.group import GroupShape
 from pptx.shapes.connector import Connector
+from io import BytesIO
 
 def duplicate_slide(pres, index):
     """
@@ -13,14 +14,86 @@ def duplicate_slide(pres, index):
     Returns the new slide.
     """
     source_slide = pres.slides[index]
-    blank_slide_layout = pres.slide_layouts[6] # Use blank layout as base
-    dest_slide = pres.slides.add_slide(blank_slide_layout)
+    # Use the same layout as the source slide to preserve background/master
+    try:
+        layout = source_slide.slide_layout
+    except:
+        # Fallback if layout access fails (rare)
+        layout = pres.slide_layouts[0]
+        
+    dest_slide = pres.slides.add_slide(layout)
 
+    # Map dest placeholders by idx
+    dest_placeholders = {}
+    for shape in dest_slide.placeholders:
+        dest_placeholders[shape.placeholder_format.idx] = shape
+        
+    # List of shapes to remove from dest_slide (initially all, we will remove from this list if we keep them)
+    shapes_to_remove = list(dest_slide.shapes)
+    
     # Copy all shapes from source to dest
     for shape in source_slide.shapes:
-        new_shape = duplicate_shape(shape, dest_slide, keep_name=True)
+        # Check if it's a placeholder
+        if shape.is_placeholder:
+            ph_format = shape.placeholder_format
+            idx = ph_format.idx
+            
+            if idx in dest_placeholders:
+                # Found matching placeholder!
+                dest_ph = dest_placeholders[idx]
+                
+                # Don't remove it
+                if dest_ph in shapes_to_remove:
+                    shapes_to_remove.remove(dest_ph)
+                
+                # Copy content from source shape to dest placeholder
+                _copy_placeholder_content(shape, dest_ph)
+                
+                # Ensure name matches (important for our logic)
+                dest_ph.name = shape.name
+                continue
+        
+        # If not a placeholder, or no match found, duplicate as new shape
+        duplicate_shape(shape, dest_slide, keep_name=True)
+        
+    # Remove unused placeholders
+    for shape in shapes_to_remove:
+        sp = shape.element
+        sp.getparent().remove(sp)
     
     return dest_slide
+
+def _copy_placeholder_content(src, dst):
+    """
+    Copy content and properties from source placeholder to destination placeholder.
+    Preserves the destination's inheritance link while copying overrides.
+    """
+    # Copy Text Body (preserves text and explicit formatting)
+    if src.has_text_frame and dst.has_text_frame:
+        if src.element.txBody is not None:
+            new_txBody = copy.deepcopy(src.element.txBody)
+            if dst.element.txBody is not None:
+                idx = dst.element.index(dst.element.txBody)
+                dst.element.remove(dst.element.txBody)
+                dst.element.insert(idx, new_txBody)
+            else:
+                dst.element.append(new_txBody)
+                
+    # Copy Shape Properties (Fill, Line, etc.)
+    if src.element.spPr is not None:
+        new_spPr = copy.deepcopy(src.element.spPr)
+        if dst.element.spPr is not None:
+            idx = dst.element.index(dst.element.spPr)
+            dst.element.remove(dst.element.spPr)
+            dst.element.insert(idx, new_spPr)
+        else:
+            dst.element.insert(1, new_spPr)
+            
+    # Copy Geometry/Position overrides
+    dst.left = src.left
+    dst.top = src.top
+    dst.width = src.width
+    dst.height = src.height
 
 def duplicate_shape(shape, slide, keep_name=False):
     """
@@ -43,68 +116,89 @@ def duplicate_shape(shape, slide, keep_name=False):
                 shape.left, shape.top, shape.width, shape.height
             )
 
-        # --- Critical Fix for Issue 3: Copy Shape Properties (Fill, Line, Gradient, etc.) ---
-        # We overwrite the new shape's spPr with a deep copy of the original
-        # This preserves gradient fills, borders, shadows, etc.
-        # Fix: Use element manipulation instead of property assignment
+        # Copy Shape Properties (Fill, Line, Gradient, etc.)
         new_element = new_shape.element
         new_spPr = copy.deepcopy(shape.element.spPr)
         
         if new_element.spPr is not None:
-            # Replace existing spPr
-            # Find index to maintain order
             idx = new_element.index(new_element.spPr)
             new_element.remove(new_element.spPr)
             new_element.insert(idx, new_spPr)
         else:
-            # Insert after nvSpPr (which is always first)
             new_element.insert(1, new_spPr)
-        
-        # Re-apply position (since spPr might contain old position)
-        # Actually, spPr contains <a:xfrm>, so copying it copies the position too.
-        # But we passed left/top to add_shape, which set the initial xfrm.
-        # Overwriting spPr overwrites that.
-        # So if we want to move it later, we can. 
-        # But duplicate_shape is supposed to create an exact clone at the same position initially.
-        # So copying spPr is perfect.
 
         # Copy text content
-        if shape.has_text_frame:
-            # We need to be careful. Copying spPr does NOT copy text.
-            # Text is in txBody.
-            # We can copy txBody too!
-            # Fix: Use element manipulation instead of property assignment
+        if shape.has_text_frame and shape.element.txBody is not None:
             new_txBody = copy.deepcopy(shape.element.txBody)
-            
-            if new_element.txBody is not None:
-                idx = new_element.index(new_element.txBody)
-                new_element.remove(new_element.txBody)
-                new_element.insert(idx, new_txBody)
-            else:
-                new_element.append(new_txBody)
-            
-            # If we copy txBody, we don't need to manually copy paragraphs/runs.
-            # This is much better and preserves all text formatting perfectly.
-            pass
+            if new_txBody is not None:
+                if new_element.txBody is not None:
+                    idx = new_element.index(new_element.txBody)
+                    new_element.remove(new_element.txBody)
+                    new_element.insert(idx, new_txBody)
+                else:
+                    new_element.append(new_txBody)
         
-    # 2. Group (Recursive)
-    elif isinstance(shape, GroupShape):
-        pass
-        
-    # 3. Picture
+    # 2. Picture
     elif isinstance(shape, Picture):
-        with open("temp_img.png", "wb") as f:
-            f.write(shape.image.blob)
-        new_shape = slide.shapes.add_picture(
-            "temp_img.png", shape.left, shape.top, shape.width, shape.height
-        )
-        
-    # 4. Copy Name (Fix for Issue 1)
+        try:
+            image_stream = BytesIO(shape.image.blob)
+            new_shape = slide.shapes.add_picture(
+                image_stream, shape.left, shape.top, shape.width, shape.height
+            )
+            
+            # Copy Picture Properties (e.g. cropping, effects)
+            new_element = new_shape.element
+            new_spPr = copy.deepcopy(shape.element.spPr)
+            if new_element.spPr is not None:
+                idx = new_element.index(new_element.spPr)
+                new_element.remove(new_element.spPr)
+                new_element.insert(idx, new_spPr)
+                
+        except Exception as e:
+            print(f"Warning: Failed to copy picture {shape.name}: {e}")
+
+    # 3. Connector
+    elif isinstance(shape, Connector):
+        try:
+            new_shape = slide.shapes.add_connector(
+                shape.connector_type, shape.begin_x, shape.begin_y, shape.end_x, shape.end_y
+            )
+            # Copy style
+            new_element = new_shape.element
+            new_spPr = copy.deepcopy(shape.element.spPr)
+            if new_element.spPr is not None:
+                idx = new_element.index(new_element.spPr)
+                new_element.remove(new_element.spPr)
+                new_element.insert(idx, new_spPr)
+            else:
+                new_element.insert(1, new_spPr)
+        except Exception as e:
+            print(f"Warning: Failed to copy connector {shape.name}: {e}")
+
+    # 4. GroupShape or GraphicFrame (Fallback to XML cloning)
+    else:
+        try:
+            # Clone the element directly
+            new_element = copy.deepcopy(shape.element)
+            
+            # Ensure unique IDs
+            for child in new_element.iter():
+                if 'id' in child.attrib:
+                     # Simple randomization to avoid collision
+                     import random
+                     child.set('id', str(random.randint(10000, 99999999)))
+            
+            slide.shapes._spTree.append(new_element)
+            return None 
+            
+        except Exception as e:
+            print(f"Warning: Failed to clone complex shape {shape.name}: {e}")
+
+    # 5. Set Name (for supported types)
     if new_shape:
         if keep_name:
             new_shape.name = shape.name
         else:
-            # Append a unique suffix to avoid name collision confusion
             new_shape.name = f"{shape.name}_copy_{uuid.uuid4().hex[:8]}"
         
     return new_shape
