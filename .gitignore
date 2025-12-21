@@ -74,5 +74,5 @@ cython_debug/
 
 # Project specific ignores
 # Ignore PPT files in input and output directories as requested
-input/*.pptx
+#input/*.pptx
 output/*.pptx
