@@ -1,2 +1,3 @@
 # word-ppt
-word文本通过调用ai总结和转换输出成markdown模板，markdown模板在根据提供的ppt模板生成ppt
+word文本首先转成json中介格式，通过https调用qwen3-max大语言模型来对json当中文本进行总结提炼，输出成markdown格式。可以在md文件中修改和优化，确保ppt大纲符合我们的需求
+项目采用的ppt模板暂时为写死了的；封面页、目录页、章节封面页1、章节内容页1、章节封面页2、章节内容页2...、结尾页
