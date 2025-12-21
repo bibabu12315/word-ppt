@@ -66,9 +66,11 @@ class MarkdownParser:
                 slide_counter += 1
                 
                 # 创建新页面
+                # 规范化：封面是 Page 0，目录是 Page 1，正文第一页是 Page 2
+                # slide_counter 从 1 开始，所以正文第一页应该是 slide_counter + 1
                 current_slide = SlideData(
                     title=match_h2.group(1).strip(),
-                    page_index=slide_counter
+                    page_index=slide_counter + 1 
                 )
                 data.slides.append(current_slide)
                 
@@ -124,7 +126,14 @@ class MarkdownParser:
                     data.meta_info[key] = value
                     continue
 
-            # 8. 普通文本段落
+            # 8. 关键词匹配 (**关键词：XXX**)
+            if line.startswith('**关键词：') and line.endswith('**'):
+                keyword_content = line.replace('**关键词：', '').replace('**', '').strip()
+                if current_block:
+                    current_block.keyword = keyword_content
+                continue
+
+            # 9. 普通文本段落
             if not is_cover_section and current_slide:
                 # Case A: 还没有进入具体的内容块(H3)，视为页面描述
                 if current_block is None:

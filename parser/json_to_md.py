@@ -86,33 +86,42 @@ class JsonToMdConverter:
 
     def _convert_with_ai(self, json_data: dict) -> str:
         """
-        AI 增强转换
-        使用 LLM 提炼和简化文本内容
+        AI 增强转换：全文重构模式
         """
-        print("AI mode selected. Refining text with Qwen-Plus...")
+        print("AI mode selected. Restructuring full document with Qwen-Max...")
         from ai.llm_client import LLMClient
         llm = LLMClient()
+
+        # 1. 数据扁平化：将 JSON 转换为带标记的纯文本
+        full_text_buffer = []
         
-        # 深度复制一份数据，以免修改原数据
-        import copy
-        refined_data = copy.deepcopy(json_data)
-        
-        sections = refined_data.get("sections", [])
-        total_sections = len(sections)
-        
-        for i, section in enumerate(sections):
-            # 简单的进度提示
-            print(f"Processing section {i+1}/{total_sections}...")
+        # 提取元数据（如果有）
+        meta = json_data.get("meta", {})
+        if meta:
+            full_text_buffer.append(f"[文档元数据]\n{json.dumps(meta, ensure_ascii=False)}\n")
+
+        sections = json_data.get("sections", [])
+        for section in sections:
+            title = section.get("title", "无标题章节")
+            level = section.get("level", 0)
             
+            # 添加章节标记
+            full_text_buffer.append(f"\n[原始章节 (Level {level})：{title}]")
+            
+            # 提取文本内容
             blocks = section.get("blocks", [])
             for block in blocks:
                 if block["type"] == "paragraph":
-                    original_text = block["text"]
-                    # 跳过太短的文本，避免浪费 token
-                    if len(original_text) > 10:
-                        refined_text = llm.refine_text(original_text)
-                        if refined_text:
-                            block["text"] = refined_text
-                            
-        print("AI refinement completed.")
-        return self._convert_default(refined_data)
+                    full_text_buffer.append(block["text"])
+                elif block["type"] == "list":
+                    for item in block["items"]:
+                        full_text_buffer.append(f"- {item}")
+
+        full_text_input = "\n".join(full_text_buffer)
+        
+        # 2. 调用 AI 进行全文重构
+        # 考虑到输入可能很长，这里依赖 LLM 的长文本能力
+        markdown_content = llm.restructure_content(full_text_input)
+        
+        print("AI restructuring completed.")
+        return markdown_content

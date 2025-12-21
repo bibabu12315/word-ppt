@@ -10,6 +10,7 @@ class ContentBlock:
     """
     subtitle: str = ""  # 小标题 (### 后的文本)
     bullets: List[str] = field(default_factory=list)  # 列表项内容 (- 后的文本)
+    keyword: str = ""   # 关键词 (从 **关键词：XXX** 解析)
 
 @dataclass
 class SlideData:

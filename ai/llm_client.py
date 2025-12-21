@@ -16,7 +16,7 @@ class LLMClient:
             print("Warning: DASHSCOPE_API_KEY environment variable not set.")
             
         self.api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-        self.model = "qwen-plus"
+        self.model = "qwen-max" # 2025年当前最强模型，用户请求 qwen3-max，若 API 不支持可回退到 qwen-max
 
     def chat_completion(self, messages: List[Dict[str, str]]) -> Optional[str]:
         """
@@ -49,27 +49,57 @@ class LLMClient:
             print(f"LLM API Error: {e}")
             return None
 
-    def refine_text(self, text: str) -> str:
+    def restructure_content(self, full_text: str) -> str:
         """
-        专门用于提炼和简化文本的便捷方法
+        全文重构：让 AI 分析全文逻辑，重新规划章节，并输出 Markdown
         """
         system_prompt = (
-            "你是一个专业的 PPT 内容策划专家。你的任务是将用户提供的长文本重写为 PPT 幻灯片上的核心要点。"
-            "原则：极简、有力、结构化。"
-            "要求："
-            "1. **极度精简**：删除所有废话、连接词和修饰语，只保留核心信息。将文本长度缩减至原来的 30%-50%。"
-            "2. **要点化**：不要使用完整的句子，使用短语或关键词。如果内容较多，可以拆分为多个短句。"
-            "3. **演讲配合**：记住 PPT 只是提词器，详细解释留给演讲者口述，不要把所有细节都写在 PPT 上。"
-            "4. **格式**：直接输出修改后的文本，不要包含任何解释或开场白。"
-            "示例："
-            "输入：'当前项目进度在等待smt公司贴片上，smt公司贴片完成后需将开发板给到硬件调试，调试完成后才可以开始软件调试。'"
-            "输出：'等待 SMT 贴片 -> 硬件调试 -> 软件调试'"
+            "你是一个专业的 PPT 架构师。你的任务是将用户提供的原始文档重构为一份结构清晰、内容精炼的 PPT 大纲（Markdown 格式）。"
+            "\n\n"
+            "### 核心原则\n"
+            "1. **结构优先**：\n"
+            "   - 如果用户原文已有清晰合理的章节（如背景、方案、成果），请**保留**该结构。\n"
+            "   - 如果用户原文结构混乱或未分段，请**大胆重构**，将其拆分为逻辑通顺的章节（建议结构：背景目标 -> 整体方案 -> 关键技术 -> 创新点 -> 成果展示 -> 价值）。\n"
+            "2. **内容极简**：\n"
+            "   - PPT 页面上的文字必须是**短语**或**金句**，严禁大段文字。\n"
+            "   - 每个页面（二级标题 ##）下的描述（普通文本）控制在 **30字以内**，作为该页的核心观点。\n"
+            "   - 详细内容使用列表（- Bullet points）展示。\n"
+            "3. **格式严格**：\n"
+            "   - 输出必须是标准的 Markdown。\n"
+            "   - **一级标题 #**：仅用于封面（如 # 项目汇报）。\n"
+            "   - **封面元数据**：如果原文中明确包含【公司名称】、【汇报人】、【部门】、【日期】等信息，请在 Markdown 开头（# 标题下方）以 `键：值` 的形式列出（如 `汇报人：张三`）。**注意：如果原文未提供某项信息，请绝对不要生成该字段，也不要编造，直接忽略即可，以便保留 PPT 模板中的原始文字。**\n"
+            "   - **二级标题 ##**：对应 PPT 的一页幻灯片（如 ## 一、项目背景）。\n"
+            "   - **页面描述（关键！）**：在每个二级标题（##）下方，必须紧跟一段**普通文本**（不带任何符号），作为该页面的核心总结（对应 page_desc）。字数严格控制在 **20-30字**。\n"
+            "   - **三级标题 ###**：对应页面内的内容块（如 ### 现状分析）。\n"
+            "   - **列表 -**：对应内容块下的要点。\n"
+            "   - **关键词（新功能）**：在每个三级标题（###）的内容块末尾，可以添加一行 `**关键词：XXX**`，用于提炼该块的核心概念（对应 pageX_keywordY）。\n"
+            "   - **分隔符**：在每个二级标题（##）之前必须添加 `---` 分隔符。\n"
+            "\n\n"
+            "### 示例结构\n"
+            "---\n"
+            "## 一、项目背景\n"
+            "本项目旨在解决光伏发电效率低下的痛点，通过智能优化算法提升能源收益。\n"
+            "\n"
+            "### 行业现状\n"
+            "- 光伏电池板受局部阴影影响大\n"
+            "- 现有方案成本高昂\n"
+            "**关键词：阴影遮挡**\n"
+            "\n\n"
+            "### 输入格式说明\n"
+            "输入文本中包含 `[原始章节：Title]` 标记，代表用户原始的划分，供你参考。"
         )
-        
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
+            {"role": "user", "content": full_text}
         ]
-        
+
+        print("Sending full content to LLM for restructuring (this may take a while)...")
         result = self.chat_completion(messages)
-        return result if result else text # 如果失败，返回原文
+        
+        if not result:
+            return "# Error\nAI 生成失败，请检查 API Key 或网络。"
+            
+        # 清理可能存在的 Markdown 代码块标记
+        cleaned_result = result.replace("```markdown", "").replace("```", "").strip()
+        return cleaned_result

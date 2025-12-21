@@ -5,7 +5,7 @@ import re
 from pptx import Presentation
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from parser.data_structs import PresentationData
 from utils.ppt_utils import duplicate_slide, move_slide, duplicate_shape
 
@@ -81,6 +81,22 @@ class PPTGenerator:
             mapping[shape.name] = shape
         return mapping
 
+    def _estimate_text_width(self, text, font_size_emu):
+        """
+        估算文本宽度 (EMU)
+        """
+        if not text:
+            return 0
+        
+        width_emu = 0
+        for char in text:
+            # 简单估算：汉字 1em，非汉字 0.6em
+            if '\u4e00' <= char <= '\u9fff':
+                width_emu += font_size_emu
+            else:
+                width_emu += font_size_emu * 0.6
+        return int(width_emu)
+
     def _fill_cover(self, slide, data: PresentationData):
         """
         填充封面信息
@@ -91,13 +107,70 @@ class PPTGenerator:
             "cover_company": data.meta_info.get("公司名称", ""),
             "cover_project": data.meta_info.get("项目名称", ""),
             "cover_presenter": data.meta_info.get("汇报人", ""),
-            "cover_dept": data.meta_info.get("部门 / 团队", ""),
+            "cover_dept": data.meta_info.get("部门", "") or data.meta_info.get("部门 / 团队", ""),
             "cover_date": data.meta_info.get("日期", "")
         }
 
         for shape_name, text_content in cover_mapping.items():
             if shape_name in shape_map and text_content:
                 self._set_text(shape_map[shape_name], text_content)
+
+        # --- 封面排版优化：横向等距分布 ---
+        # 需求：cover_dept -> 直接连接符 7 -> cover_presenter -> 直接连接符 6 -> cover_date
+        # 位置：左下角 (以 cover_dept 的位置为基准)
+        
+        ordered_names = ["cover_dept", "直接连接符 7", "cover_presenter", "直接连接符 6", "cover_date"]
+        valid_shapes = []
+        
+        # 更加鲁棒的查找逻辑 (处理可能的空格)
+        for name in ordered_names:
+            shape = shape_map.get(name)
+            if not shape:
+                # 尝试查找去除空格后的名称
+                for s_name, s in shape_map.items():
+                    if s_name.strip() == name:
+                        shape = s
+                        break
+            if shape:
+                valid_shapes.append(shape)
+        
+        if len(valid_shapes) > 1:
+            # 1. 确定基准位置
+            base_top = valid_shapes[0].top
+            current_left = valid_shapes[0].left
+            
+            # 2. 设置间距 (1-2个空格，约 15pt)
+            spacing = Pt(15)
+            
+            for shape in valid_shapes:
+                tf = shape.text_frame
+                
+                # 设置不换行 & 自适应宽度
+                tf.word_wrap = False
+                tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+                
+                # 垂直对齐
+                shape.top = base_top
+                
+                # 水平定位
+                shape.left = current_left
+                
+                # 估算宽度并更新 current_left
+                # 由于 python-pptx 无法实时获取渲染后的宽度，我们需要估算
+                font_size_emu = Pt(18) # 默认 18pt
+                try:
+                    if tf.paragraphs and tf.paragraphs[0].runs:
+                        fs = tf.paragraphs[0].runs[0].font.size
+                        if fs:
+                            font_size_emu = fs
+                except:
+                    pass
+                
+                text = tf.text
+                estimated_width = self._estimate_text_width(text, font_size_emu)
+                
+                # 加上间距
+                current_left += estimated_width + spacing
 
     def _fill_toc(self, slide, data: PresentationData):
         """
@@ -205,6 +278,15 @@ class PPTGenerator:
             
             self._set_text(num_shape, num_text)
             self._set_text(title_shape, title_text)
+            
+            # 规范化命名：page{i+2}_title (目录项对应正文页的标题)
+            # 目录本身是 Page 1，正文第一页是 Page 2
+            target_page_idx = i + 2
+            title_shape.name = f"page{target_page_idx}_title"
+            num_shape.name = f"page{target_page_idx}_title_num"
+
+        # 4. 填充页码 (page1)
+        self._ensure_page_number(slide, 1)
 
     def _fill_content_page(self, slide, chapter_data, all_titles, current_index):
         """
@@ -212,22 +294,46 @@ class PPTGenerator:
         包含: 导航栏, 描述, 正文
         """
         shape_map = self._build_shape_map(slide)
+        page_idx = chapter_data.page_index # 应该是 2, 3, 4...
         
-        # 1. 生成导航栏 (page1_title)
+        # 1. 生成导航栏 (page1_title) -> page{page_idx}_title
         proto_nav = shape_map.get("page1_title")
         if proto_nav:
+            # 获取页面尺寸
+            prs = slide.part.package.presentation_part.presentation
+            slide_height = prs.slide_height
+            
+            # 强制定位到左下角
+            # 左边距 30pt, 下边距 30pt
+            fixed_left = Pt(30)
+            fixed_bottom = Pt(30)
+            
+            # 计算起始 Top (假设所有导航项高度一致，使用原型高度)
+            start_top = slide_height - proto_nav.height - fixed_bottom
+            start_left = fixed_left
+            
             margin_x = proto_nav.width * 1.1 
-            start_left = proto_nav.left
             
             # --- Fix for Issue 4: Clone FIRST, then fill ---
             nav_items = []
             for i in range(len(all_titles)):
+                # 计算当前项的位置
+                current_item_left = start_left + int(i * margin_x)
+                
                 if i == 0:
-                    nav_items.append(proto_nav)
+                    shape = proto_nav
                 else:
-                    new_shape = duplicate_shape(proto_nav, slide)
-                    new_shape.left = start_left + int(i * margin_x)
-                    nav_items.append(new_shape)
+                    shape = duplicate_shape(proto_nav, slide)
+                
+                # 强制设置位置 (覆盖模板原有位置)
+                shape.left = current_item_left
+                shape.top = start_top
+                
+                nav_items.append(shape)
+                
+                # 规范化命名：导航栏的每一项对应一个页面
+                # 第 i 项对应 Page {i+2}
+                nav_items[-1].name = f"page{i+2}_title"
             
             # Fill text and color
             for i, shape in enumerate(nav_items):
@@ -246,32 +352,32 @@ class PPTGenerator:
         if "page1_desc" in shape_map:
             self._set_text(shape_map["page1_desc"], chapter_data.description)
 
-        # 3. 填充正文
+        # 3. 填充页码 (page1 -> pageX)
+        self._ensure_page_number(slide, page_idx)
+
+        # 4. 填充正文
         # 模式 A: 标题+内容 分离模式 (page1_bullet1 + page1_content1)
         if "page1_bullet1" in shape_map and "page1_content1" in shape_map:
-            self._fill_content_paired(slide, shape_map["page1_bullet1"], shape_map["page1_content1"], chapter_data.blocks)
+            self._fill_content_paired(slide, shape_map["page1_bullet1"], shape_map["page1_content1"], chapter_data.blocks, shape_map, page_idx)
         
         # 模式 B: 仅有内容框 (page1_content1) - 自动分段
         elif "page1_content1" in shape_map:
-            self._fill_content_multibox(slide, shape_map["page1_content1"], chapter_data.blocks)
-            
-        # 模式 C: 旧模式 (page1_bullet1) - 单文本框
-        elif "page1_bullet1" in shape_map:
-            full_blocks = []
-            for block in chapter_data.blocks:
-                full_blocks.append(block)
-            self._set_blocks_text(shape_map["page1_bullet1"], full_blocks)
+            self._fill_content_multibox(slide, shape_map["page1_content1"], chapter_data.blocks, shape_map, page_idx)
 
-    def _fill_content_paired(self, slide, proto_title, proto_content, blocks):
+    def _fill_content_paired(self, slide, proto_title, proto_content, blocks, shape_map, page_idx):
         """
         分离模式：每个 Block 生成一对 (标题框, 内容框)
-        - 标题框使用 page1_bulletX
-        - 内容框使用 page1_contentX (每个段落一个框)
+        - 标题框使用 pageX_bulletY
+        - 内容框使用 pageX_contentY
+        - 关键词框使用 pageX_keywordY
         """
         if not blocks:
             proto_title.text_frame.clear()
             proto_content.text_frame.clear()
             return
+
+        # 查找关键词原型
+        proto_keyword = shape_map.get("page1_keyword1")
 
         # 布局参数
         start_top = proto_title.top
@@ -289,6 +395,7 @@ class PPTGenerator:
         
         title_counter = 0
         content_counter = 0
+        keyword_counter = 0
         
         for block in blocks:
             # 1. 处理标题 (Subtitle)
@@ -297,49 +404,49 @@ class PPTGenerator:
                 title_shape = proto_title
             else:
                 title_shape = duplicate_shape(proto_title, slide)
-                title_shape.name = f"page1_bullet{title_counter}"
+            
+            # 规范化命名：page{page_idx}_bullet{title_counter}
+            title_shape.name = f"page{page_idx}_bullet{title_counter}"
             
             title_shape.top = current_top
             self._set_text(title_shape, block.subtitle)
+            current_top += title_shape.height + gap_title_content
             
-            # 更新高度 (标题通常单行，使用原型高度)
-            title_height = max(proto_title.height, Pt(30))
-            current_top += title_height + gap_title_content
-            
-            # 2. 处理内容 (Bullets) - 每个段落一个文本框
+            # 2. 处理内容 (Bullets)
             for bullet_text in block.bullets:
                 content_counter += 1
                 if content_counter == 1:
                     content_shape = proto_content
                 else:
                     content_shape = duplicate_shape(proto_content, slide)
-                    content_shape.name = f"page1_content{content_counter}"
+                
+                # 规范化命名：page{page_idx}_content{content_counter}
+                content_shape.name = f"page{page_idx}_content{content_counter}"
                 
                 content_shape.top = current_top
                 self._set_text(content_shape, bullet_text)
-                
-                # 估算内容高度
-                lines = bullet_text.split('\n')
-                total_visual_lines = 0
-                for line in lines:
-                    # 每行按 25 字折行 (粗略估算)
-                    line_len = len(line)
-                    if line_len == 0:
-                        total_visual_lines += 1
-                    else:
-                        total_visual_lines += (line_len // 25) + 1
-                
-                estimated_height = total_visual_lines * Pt(22) + Pt(10)
-                final_height = max(estimated_height, Pt(30))
-                
-                current_top += final_height + gap_paragraph
-            
-            # 块结束后增加额外间距 (减去最后一次加的段落间距，加上块间距)
-            current_top = current_top - gap_paragraph + gap_block
+                current_top += content_shape.height + gap_paragraph
 
-    def _fill_content_multibox(self, slide, proto_shape, blocks):
+            # 3. 处理关键词 (Keyword)
+            if block.keyword and proto_keyword:
+                keyword_counter += 1
+                if keyword_counter == 1:
+                    keyword_shape = proto_keyword
+                else:
+                    keyword_shape = duplicate_shape(proto_keyword, slide)
+                
+                # 规范化命名：page{page_idx}_keyword{keyword_counter}
+                keyword_shape.name = f"page{page_idx}_keyword{keyword_counter}"
+                
+                keyword_shape.top = current_top
+                self._set_text(keyword_shape, block.keyword)
+                current_top += keyword_shape.height + gap_paragraph
+
+            current_top += gap_block
+
+    def _fill_content_multibox(self, slide, proto_shape, blocks, shape_map, page_idx):
         """
-        新模式：将内容块拆分为多个文本框 (page1_content1, page1_content2...)
+        新模式：将内容块拆分为多个文本框 (pageX_content1, pageX_content2...)
         """
         # 1. 收集所有需要显示的文本段落
         segments = []
@@ -352,53 +459,83 @@ class PPTGenerator:
                 segments.append({"text": bullet, "is_title": False})
         
         if not segments:
-            # 如果没有内容，清空原型并返回
             proto_shape.text_frame.clear()
             return
 
-        # 2. 动态生成文本框
-        current_shape = proto_shape
-        
-        # 设置第一个文本框
-        self._set_segment_text(current_shape, segments[0])
-        
-        # 记录起始位置和布局参数
-        start_left = proto_shape.left
+        # 2. 布局参数
         start_top = proto_shape.top
-        # 估算高度步长 (由于无法精确获取渲染高度，这里使用原型高度 + 间距)
-        # 如果原型高度太小，给一个默认最小值
-        item_height = max(proto_shape.height, Pt(30)) 
-        spacing = Pt(10) # 间距
+        gap = Pt(10)
+        current_top = start_top
         
-        current_top = start_top + item_height + spacing
-
-        for i in range(1, len(segments)):
-            segment = segments[i]
+        # 3. 生成文本框
+        for i, seg in enumerate(segments):
+            if i == 0:
+                shape = proto_shape
+            else:
+                shape = duplicate_shape(proto_shape, slide)
             
-            # 复制形状
-            new_shape = duplicate_shape(proto_shape, slide)
-            new_shape.name = f"page1_content{i+1}"
+            # 规范化命名：page{page_idx}_content{i+1}
+            shape.name = f"page{page_idx}_content{i+1}"
             
-            # 设置位置
-            new_shape.left = start_left
-            new_shape.top = current_top
+            shape.top = current_top
             
             # 设置文本
-            self._set_segment_text(new_shape, segment)
+            self._set_segment_text(shape, seg)
             
-            # 更新下一个位置
-            # 注意：这里仍然是基于固定步长，因为无法获取 auto_size 后的真实高度
-            # 这是一个已知限制。如果文本很长，可能会重叠。
-            # 改进方案：根据字数估算行数？
-            # 简单估算：假设一行 20-30 字 (取决于宽度和字号)
-            # 这是一个粗略的 hack
-            estimated_lines = max(1, len(segment["text"]) // 25) 
-            # 假设行高 20pt?
-            estimated_height = estimated_lines * Pt(20) + Pt(10) # padding
+            # 更新位置
+            current_top += shape.height + gap
+
+    def _ensure_page_number(self, slide, page_idx):
+        """
+        确保页面右下角有页码
+        """
+        shape_map = self._build_shape_map(slide)
+        target_name = f"page{page_idx}"
+        
+        # 1. 尝试查找现有的页码框 (可能是 page1 原型，或者是已经重命名的 pageX)
+        page_shape = shape_map.get(target_name)
+        if not page_shape:
+            # 尝试查找原型 page1
+            page_shape = shape_map.get("page1")
+        
+        # 2. 如果还没找到，创建一个新的
+        if not page_shape:
+            # 获取页面尺寸
+            prs = slide.part.package.presentation_part.presentation
+            slide_width = prs.slide_width
+            slide_height = prs.slide_height
             
-            # 使用估算高度或者原型高度的较大值
-            step = max(item_height, estimated_height)
-            current_top += step + spacing
+            # 尺寸和位置
+            width = Pt(50)
+            height = Pt(30)
+            margin = Pt(20)
+            
+            left = slide_width - width - margin
+            top = slide_height - height - margin
+            
+            page_shape = slide.shapes.add_textbox(left, top, width, height)
+        
+        # 3. 更新属性
+        page_shape.name = target_name
+        self._set_text(page_shape, str(page_idx))
+        
+        # 4. 强制定位到右下角 (用户要求：所有的页码文本框位置均在右下角)
+        prs = slide.part.package.presentation_part.presentation
+        slide_width = prs.slide_width
+        slide_height = prs.slide_height
+        
+        # 保持原有宽高，或者给个最小值
+        width = max(page_shape.width, Pt(30))
+        height = max(page_shape.height, Pt(20))
+        margin_right = Pt(30) # 右边距
+        margin_bottom = Pt(20) # 下边距
+        
+        page_shape.left = slide_width - width - margin_right
+        page_shape.top = slide_height - height - margin_bottom
+        
+        # 设置右对齐
+        if page_shape.text_frame.paragraphs:
+            page_shape.text_frame.paragraphs[0].alignment = PP_ALIGN.RIGHT
 
     def _set_segment_text(self, shape, segment):
         """
