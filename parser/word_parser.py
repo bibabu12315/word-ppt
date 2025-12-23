@@ -10,21 +10,23 @@ class WordParser:
     不使用 AI，仅基于文档结构（样式、层级）进行规则解析。
     """
 
-    def parse(self, docx_path: str) -> dict:
+    def parse(self, docx_source) -> dict:
         """
         解析 Word 文档
-        :param docx_path: Word 文档路径
+        :param docx_source: Word 文档路径 (str) 或 文件对象 (bytes stream)
         :return: 解析后的字典数据
         """
-        if not os.path.exists(docx_path):
-            raise FileNotFoundError(f"Word file not found: {docx_path}")
+        if isinstance(docx_source, str):
+            if not os.path.exists(docx_source):
+                raise FileNotFoundError(f"Word file not found: {docx_source}")
 
-        document = Document(docx_path)
+        document = Document(docx_source)
         
         # 初始化结果结构
+        source_name = os.path.basename(docx_source) if isinstance(docx_source, str) else "uploaded_file"
         result = {
             "meta": {
-                "source": os.path.basename(docx_path)
+                "source": source_name
             },
             "sections": []
         }

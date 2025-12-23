@@ -16,7 +16,7 @@ class LLMClient:
             print("Warning: DASHSCOPE_API_KEY environment variable not set.")
             
         self.api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-        self.model = "qwen-max" # 2025年当前最强模型，用户请求 qwen3-max，若 API 不支持可回退到 qwen-max
+        self.model = "qwen-plus" # 切换为 qwen-plus 模型
 
     def chat_completion(self, messages: List[Dict[str, str]]) -> Optional[str]:
         """
