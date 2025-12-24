@@ -209,62 +209,7 @@ class PPTGenerator:
             if shape_name in shape_map and text_content:
                 self._set_text(shape_map[shape_name], text_content)
 
-        # --- 封面排版优化：横向等距分布 ---
-        # 需求：cover_dept -> 直接连接符 7 -> cover_presenter -> 直接连接符 6 -> cover_date
-        # 位置：左下角 (以 cover_dept 的位置为基准)
-        
-        ordered_names = ["cover_dept", "直接连接符 7", "cover_presenter", "直接连接符 6", "cover_date"]
-        valid_shapes = []
-        
-        # 更加鲁棒的查找逻辑 (处理可能的空格)
-        for name in ordered_names:
-            shape = shape_map.get(name)
-            if not shape:
-                # 尝试查找去除空格后的名称
-                for s_name, s in shape_map.items():
-                    if s_name.strip() == name:
-                        shape = s
-                        break
-            if shape:
-                valid_shapes.append(shape)
-        
-        if len(valid_shapes) > 1:
-            # 1. 确定基准位置
-            base_top = valid_shapes[0].top
-            current_left = valid_shapes[0].left
-            
-            # 2. 设置间距 (1-2个空格，约 15pt)
-            spacing = Pt(15)
-            
-            for shape in valid_shapes:
-                tf = shape.text_frame
-                
-                # 设置不换行 & 自适应宽度
-                tf.word_wrap = False
-                tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
-                
-                # 垂直对齐
-                shape.top = base_top
-                
-                # 水平定位
-                shape.left = current_left
-                
-                # 估算宽度并更新 current_left
-                # 由于 python-pptx 无法实时获取渲染后的宽度，我们需要估算
-                font_size_emu = Pt(18) # 默认 18pt
-                try:
-                    if tf.paragraphs and tf.paragraphs[0].runs:
-                        fs = tf.paragraphs[0].runs[0].font.size
-                        if fs:
-                            font_size_emu = fs
-                except:
-                    pass
-                
-                text = tf.text
-                estimated_width = self._estimate_text_width(text, font_size_emu)
-                
-                # 加上间距
-                current_left += estimated_width + spacing
+
 
     def _fill_toc(self, slide, data: PresentationData):
         """

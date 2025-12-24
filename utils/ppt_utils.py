@@ -5,6 +5,7 @@ from pptx.shapes.graphfrm import GraphicFrame
 from pptx.shapes.picture import Picture
 from pptx.shapes.group import GroupShape
 from pptx.shapes.connector import Connector
+from pptx.oxml.ns import qn
 from io import BytesIO
 
 def duplicate_slide(pres, index):
@@ -88,6 +89,29 @@ def _copy_placeholder_content(src, dst):
             dst.element.insert(idx, new_spPr)
         else:
             dst.element.insert(1, new_spPr)
+
+    # Copy Shape Style (Theme references) for Placeholders
+    # Use qn('p:style') to find the style element as it's not exposed as an attribute on CT_Shape
+    src_style = src.element.find(qn('p:style'))
+    dst_style = dst.element.find(qn('p:style'))
+    
+    if src_style is not None:
+        new_style = copy.deepcopy(src_style)
+        if dst_style is not None:
+            idx = dst.element.index(dst_style)
+            dst.element.remove(dst_style)
+            dst.element.insert(idx, new_style)
+        else:
+            # Insert after spPr if possible, otherwise append
+            if dst.element.spPr is not None:
+                idx = dst.element.index(dst.element.spPr) + 1
+                dst.element.insert(idx, new_style)
+            else:
+                dst.element.append(new_style)
+    else:
+        # If source has no style, remove destination style
+        if dst_style is not None:
+            dst.element.remove(dst_style)
             
     # Copy Geometry/Position overrides
     dst.left = src.left
@@ -126,6 +150,28 @@ def duplicate_shape(shape, slide, keep_name=False):
             new_element.insert(idx, new_spPr)
         else:
             new_element.insert(1, new_spPr)
+
+        # Copy Shape Style (Theme references)
+        # Ensure we copy the style element if it exists, or remove it if it doesn't.
+        # This fixes the issue where generated shapes have unwanted borders (from default theme style).
+        src_style = shape.element.find(qn('p:style'))
+        dst_style = new_element.find(qn('p:style'))
+        
+        if src_style is not None:
+            new_style = copy.deepcopy(src_style)
+            if dst_style is not None:
+                idx = new_element.index(dst_style)
+                new_element.remove(dst_style)
+                new_element.insert(idx, new_style)
+            else:
+                # Insert after spPr
+                # We know spPr exists because we just touched it.
+                idx = new_element.index(new_element.spPr) + 1
+                new_element.insert(idx, new_style)
+        else:
+            # Source has no style, remove destination style if present
+            if dst_style is not None:
+                new_element.remove(dst_style)
 
         # Copy text content
         if shape.has_text_frame and shape.element.txBody is not None:

@@ -280,6 +280,11 @@ def main():
                     md_parser = MarkdownParser()
                     presentation_data = md_parser.parse_file(generated_md_path)
                     
+                    # 强制限制章节数量为 8
+                    if len(presentation_data.slides) > 8:
+                        st.warning(f"⚠️ 生成的章节数量 ({len(presentation_data.slides)}) 超过限制，已自动截取前 8 章。")
+                        presentation_data.slides = presentation_data.slides[:8]
+                    
                     generator = PPTGenerator(template_pptx_path, output_pptx_path)
                     generator.generate(presentation_data)
                     
