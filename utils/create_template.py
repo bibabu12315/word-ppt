@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：utils/create_template.py
+主要作用：创建基础 PPT 模板
+实现功能：
+1. 使用 python-pptx 从零创建一个基础的 PPT 模板文件
+2. 定义母版布局和占位符
+3. 用于在没有外部模板时提供默认模板
+"""
 import os
 from pptx import Presentation
 from pptx.util import Inches, Pt

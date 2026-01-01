@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：app.py
+主要作用：Streamlit Web 应用程序
+实现功能：
+1. 提供图形化界面供用户上传 Word 文档
+2. 在线预览和编辑生成的 Markdown
+3. 配置 PPT 生成参数
+4. 下载生成的 PPT 文件
+"""
 import streamlit as st
 import os
 import json

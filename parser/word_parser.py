@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：parser/word_parser.py
+主要作用：Word 文档解析器
+实现功能：
+1. 使用 python-docx 读取 Word 文档
+2. 提取文档中的标题、段落、列表等内容
+3. 识别文档层级结构
+4. 将文档内容转换为中间格式 (JSON)
+"""
 import json
 import os
 from docx import Document

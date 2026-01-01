@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：parser/json_to_md.py
+主要作用：JSON 转 Markdown 转换器
+实现功能：
+1. 将 WordParser 解析出的 JSON 数据转换为 Markdown 格式
+2. 按照 PPT 生成所需的结构组织 Markdown 内容
+3. 处理标题、列表等文本格式
+"""
 import json
 
 class JsonToMdConverter:

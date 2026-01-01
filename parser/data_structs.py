@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：parser/data_structs.py
+主要作用：数据结构定义
+实现功能：
+1. 定义项目中使用的数据类 (Data Classes)
+2. 包含 PresentationData, SlideData, ContentBlock 等核心数据结构
+3. 规范各模块间的数据传递格式
+"""
 from dataclasses import dataclass, field
 from typing import List, Dict
 

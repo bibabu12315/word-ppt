@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：ai/llm_client.py
+主要作用：LLM API 客户端
+实现功能：
+1. 封装与大语言模型 (如通义千问) 的交互接口
+2. 发送 Prompt 并获取响应
+3. 处理 API 认证和错误重试
+"""
 import os
 import json
 import requests

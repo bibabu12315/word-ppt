@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：generate_ppt.py
+主要作用：Markdown 转 PPT 脚本
+实现功能：
+1. 读取指定的 Markdown 文件 (.md)
+2. 使用 MarkdownParser 解析 Markdown 内容为结构化数据
+3. 使用 PPTGenerator 基于模板生成 PowerPoint 演示文稿
+4. 输出最终的 .pptx 文件
+"""
 import os
 import sys
 from parser.markdown_parser import MarkdownParser

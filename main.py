@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：main.py
+主要作用：主程序入口 (CLI)
+实现功能：
+1. 提供命令行接口，串联 Word -> Markdown -> PPT 的完整流程
+2. 也可以单独执行各个步骤
+3. 包含环境变量加载和基础配置
+"""
 import os
 import sys
 import json

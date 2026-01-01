@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：ppt/generator.py
+主要作用：PPT 生成器核心逻辑
+实现功能：
+1. 加载 PPT 模板文件
+2. 根据 PresentationData 数据创建幻灯片
+3. 处理封面、目录、过渡页、内容页的生成
+4. 负责文本填充、样式复制、图片插入等具体操作
+"""
 import os
 import copy
 import re

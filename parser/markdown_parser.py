@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：parser/markdown_parser.py
+主要作用：Markdown 解析器
+实现功能：
+1. 解析特定格式的 Markdown 文本
+2. 提取幻灯片结构（封面、目录、章节、内容页）
+3. 将 Markdown 转换为 PresentationData 数据对象
+"""
 import re
 import os
 from typing import List, Optional

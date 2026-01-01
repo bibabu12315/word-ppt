@@ -1,3 +1,12 @@
+"""
+文件名称：utils/ppt_utils.py
+主要作用：PPT 操作工具函数库
+实现功能：
+1. 提供底层的 python-pptx 操作辅助函数
+2. 实现幻灯片复制 (duplicate_slide)
+3. 实现形状复制 (duplicate_shape)
+4. 处理文本样式复制、图片复制等细节
+"""
 import copy
 import uuid
 from pptx.shapes.autoshape import Shape

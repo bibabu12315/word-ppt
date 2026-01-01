@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：generate_md.py
+主要作用：Word 转 Markdown 脚本
+实现功能：
+1. 读取指定的 Word 文档 (.docx)
+2. 使用 WordParser 解析文档结构
+3. 使用 JsonToMdConverter 将解析结果转换为 Markdown 格式
+4. 将生成的 Markdown 保存到 output 目录，供后续编辑或生成 PPT 使用
+"""
 import os
 import sys
 import json

@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+文件名称：utils/create_dummy_docx.py
+主要作用：生成测试用 Word 文档
+实现功能：
+1. 使用 python-docx 创建一个包含标准结构的 Word 文档
+2. 用于测试解析器和生成流程
+3. 包含标题、列表、段落等多种格式
+"""
 from docx import Document
 
 def create_dummy_docx(path):
